@@ -32,22 +32,33 @@ aparecen códigos nuevos se cargan con un CSV/XLSX de dos columnas
 
 ## Cómo lee las etiquetas
 
-El código de barras de la cooperativa trae los tres datos **en este orden:
-código, metraje y folio**. Así, `F0157 1000 1053` son 1000 metros del carrete
-1053. Cuando los datos vienen rotulados (`N°1053`, `1000 MTS`) manda el rótulo,
-no la posición:
+El código de barras de la cooperativa trae los tres datos separados por
+guiones y **en este orden: código, metraje y folio**. Así, `F0297-380-0018`
+son 380 metros del carrete 0018.
+
+La regla de fondo es la de quien imprime las etiquetas: **el folio es siempre
+el último número**. Por eso se lee desde el final. Cuando los datos vienen
+rotulados (`N°0018`, `380 MTS`) manda el rótulo y no la posición:
 
 | Etiqueta | Código | Folio | Metros |
 |---|---|---|---|
-| `F0157 1000 1053` | F0157 | 1053 | 1000 |
-| `F0157 N°1053 1000 MTS` | F0157 | 1053 | 1000 |
-| `F0157;1000;1053` | F0157 | 1053 | 1000 |
+| `F0297-380-0018` | F0297 | 0018 | 380 |
+| `F0297 N°0018 380 MTS` | F0297 | 0018 | 380 |
+| `F0297;380;0018` | F0297 | 0018 | 380 |
 | `F0270 CARRETE 8891 1.250,5 M` | F0270 | 8891 | 1250,5 |
 | `F0243 FOLIO 777 METROS 320` | F0243 | 777 | 320 |
-| `1053` | — | 1053 | — |
+| `0018` | — | 0018 | — |
 
 Un número suelto se toma como folio: casi siempre es alguien buscando un
 carrete, no declarando un metraje.
+
+El folio se guarda **como viene impreso** (`0018` se muestra `0018`), pero se
+compara sin los ceros de adelante, así que `0018` y `18` son el mismo carrete
+y no se duplica nada.
+
+El guión separa sólo cuando está entre dígitos, para que un folio como `A-2201`
+no se parta al medio. Los asteriscos que algunos lectores de Code 39 dejan
+pegados (`*F0297-380-0018*`) se ignoran.
 
 Lo que se dedujo por posición (y no por un rótulo) se marca con `?` en pantalla
 para que el operario lo confirme antes de que se descuente nada. Y si con ese

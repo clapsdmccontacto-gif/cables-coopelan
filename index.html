@@ -1461,7 +1461,7 @@ const CONFIG_FIJA = {
    archivo es de texto y quien lo abra puede mirarlo. Sirve para que un
    operario no cambie la configuracion sin querer.
    Se guarda el valor transformado para que no se lea de un vistazo. */
-const VERSION_APP = '2026-09-09.3';
+const VERSION_APP = '2026-09-09.4';
 
 const CLAVE_ADMIN = 2916600601;
 function huella(txt) {
@@ -1604,12 +1604,16 @@ function cargarTodo() {
    ========================================================================== */
 const RE_COD = /\b([A-Z])\s*-?\s*(\d{4})\b/i;
 
-/* 00123 y 123 son el mismo carrete: se comparan siempre normalizados. */
-const normFolio = (v) => String(v ?? '').trim().toUpperCase()
+/* Saca el rótulo y los espacios, pero deja el folio tal cual se imprimió:
+   si la etiqueta dice 0018, en pantalla tiene que decir 0018 y no 18. */
+const folioLimpio = (v) => String(v ?? '').trim().toUpperCase()
   .replace(/^(?:FOLIO|FOL|CARRETE|ROLLO|BOBINA)\s*[°ºo*.:=-]*\s*/i, '')
   .replace(/^N\s*[°ºo*.]?\s*/i, '')
-  .replace(/\s+/g, '')
-  .replace(/^0+(?=\d)/, '');
+  .replace(/\s+/g, '');
+
+/* Clave para comparar: 0018 y 18 son el mismo carrete. Se usa sólo para
+   buscar y para armar el id, nunca para mostrar. */
+const normFolio = (v) => folioLimpio(v).replace(/^0+(?=\d)/, '');
 
 const normCod = (v) => {
   const m = String(v ?? '').match(RE_COD);
@@ -1621,29 +1625,44 @@ function leerEtiqueta(bruto) {
   const r = { bruto: s, codigo: '', folio: '', metros: null, supuesto: [], resto: '' };
   if (!s) return r;
 
-  // Los separadores no cambian nada: se tratan como espacios y despues
-  // decide el orden, igual que con una etiqueta escrita con espacios.
-  let resto = ' ' + s.replace(/[;|]/g, ' ') + ' ';
+  /* Los separadores no cambian nada: se vuelven espacios y después decide
+     el mismo criterio que con una etiqueta escrita separada por espacios.
+
+     El guión es el que usa el código de barras de la cooperativa
+     (F0297-380-0018), pero sólo separa cuando está ENTRE DÍGITOS: así un
+     folio como A-2201 no se parte al medio. Los asteriscos son las marcas
+     de inicio y fin que algunos lectores de Code 39 dejan pegadas. */
+  let resto = ' ' + s.replace(/[;|\t]/g, ' ')
+                     .replace(/^\*+|\*+$/g, ' ')
+                     .replace(/(\d)-(?=\d)/g, '$1 ') + ' ';
 
   // 1 · codigo del cable
   const mCod = resto.match(RE_COD);
   if (mCod) { r.codigo = (mCod[1] + mCod[2]).toUpperCase(); resto = resto.replace(mCod[0], ' '); }
 
-  // 2 · metros, cuando vienen con su unidad o con la palabra por delante
-  const mMet = resto.match(/\b(?:MTS?|MTRS?|METROS?|LARGO)\s*[:=]?\s*([\d.,]+)/i)
-            || resto.match(/([\d.,]+)\s*(?:MTRS|MTS|METROS|METRO|MT|M)\b/i);
+  /* 2 · folio rotulado (N°0018, FOLIO 1053, CARRETE 8891). Va ANTES que
+     los metros a propósito: en "FOLIO 777 METROS 320" el 777 es el folio,
+     y si primero se buscaran los metros, "777 METROS" se lo llevaría. */
+  const mFol = resto.match(/\b(?:FOLIO|FOL|CARRETE|ROLLO|BOBINA|NRO|NO|N)\s*[°ºo*.:=-]?\s*([A-Z]{0,2}-?\d{1,}[A-Z]?)\b/i);
+  if (mFol) { r.folio = folioLimpio(mFol[1]); resto = resto.replace(mFol[0], ' '); }
+
+  /* 3 · metros. Primero la forma "380 MTS", que es como vienen impresos;
+     recién después "METROS: 320". Al revés, en "380 MTS 999" la unidad
+     enganchaba con el número de atrás y devolvía 999. */
+  const mMet = resto.match(/([\d.,]+)\s*(?:MTRS|MTS|METROS|METRO|MT|M)\b/i)
+            || resto.match(/\b(?:MTS?|MTRS?|METROS?|LARGO)\s*[:=]?\s*([\d.,]+)/i);
   if (mMet) { r.metros = aNum(mMet[1]); resto = resto.replace(mMet[0], ' '); }
 
-  // 3 · folio rotulado (N°1053, FOLIO 1053, CARRETE 1053)
-  const mFol = resto.match(/\b(?:FOLIO|FOL|CARRETE|ROLLO|BOBINA|NRO|NO|N)\s*[°ºo*.:=-]?\s*([A-Z]{0,2}-?\d{2,}[A-Z]?)\b/i);
-  if (mFol) { r.folio = normFolio(mFol[1]); resto = resto.replace(mFol[0], ' '); }
+  /* 4 · Lo que queda son números sin rótulo, que es lo que trae el código
+     de barras de la cooperativa: CÓDIGO, METRAJE y FOLIO
+     (F0297-380-0018 = 380 metros del carrete 0018).
 
-  /* 4 · Lo que queda son numeros sin rotulo, que es lo que trae el codigo
-     de barras de la cooperativa. Ahi el orden es CODIGO, METRAJE y FOLIO
-     (F0157 1000 1053 = 1000 metros del carrete 1053), asi que con dos
-     numeros sueltos el primero son los metros y el segundo el folio.
+     La regla es del que imprime las etiquetas: EL FOLIO ES SIEMPRE EL
+     ÚLTIMO NÚMERO. Por eso se toma desde el final y no desde el principio:
+     si la etiqueta trae algún número de más adelante, el folio sigue
+     saliendo bien. Los metros son el número anterior.
 
-     Con UNO solo se toma como folio: un numero suelto casi siempre es
+     Con UNO solo se toma como folio: un número suelto casi siempre es
      alguien buscando un carrete, no declarando un metraje.
 
      Solo se piden numeros rodeados de espacios. Si la etiqueta trae
@@ -1654,11 +1673,11 @@ function leerEtiqueta(bruto) {
                 (m, tok) => { sueltos.push(tok.toUpperCase()); return m; });
 
   if (sueltos.length >= 2 && !r.folio && r.metros == null) {
-    r.metros = aNum(sueltos.shift()); r.supuesto.push('metros');
-    r.folio  = normFolio(sueltos.shift()); r.supuesto.push('folio');
+    r.folio  = folioLimpio(sueltos.pop()); r.supuesto.push('folio');
+    r.metros = aNum(sueltos.pop());        r.supuesto.push('metros');
   } else {
-    if (!r.folio && sueltos.length) { r.folio = normFolio(sueltos.shift()); r.supuesto.push('folio'); }
-    if (r.metros == null && sueltos.length) { r.metros = aNum(sueltos.shift()); r.supuesto.push('metros'); }
+    if (!r.folio && sueltos.length) { r.folio = folioLimpio(sueltos.pop()); r.supuesto.push('folio'); }
+    if (r.metros == null && sueltos.length) { r.metros = aNum(sueltos.pop()); r.supuesto.push('metros'); }
   }
   sueltos.forEach(n => { resto = resto.replace(n, ' '); });
 
@@ -1712,10 +1731,10 @@ function buscarCarrete(codigo, folio) {
   const c = normCod(codigo);
   const vivos = stockVivo();
   if (c) {
-    const exacto = vivos.filter(r => r.codigo === c && r.folio === f);
+    const exacto = vivos.filter(r => r.codigo === c && normFolio(r.folio) === f);
     if (exacto.length) return exacto;
   }
-  return vivos.filter(r => r.folio === f);
+  return vivos.filter(r => normFolio(r.folio) === f);
 }
 
 function buscar(texto) {
@@ -1732,7 +1751,7 @@ function buscar(texto) {
     const alReves = buscarCarrete(et.codigo, String(et.metros));
     if (alReves.length) {
       const metros = aNum(et.folio);
-      et.folio = normFolio(String(et.metros));
+      et.folio = folioLimpio(String(et.metros));
       et.metros = metros;
       return { et, hits: alReves, por: 'folio' };
     }
@@ -4161,7 +4180,7 @@ function registrarEnStock(texto) {
   const m = redM(metros == null ? 0 : metros);
   const reg = {
     id: idCarrete(codigo, et.folio),
-    codigo, folio: normFolio(et.folio),
+    codigo, folio: folioLimpio(et.folio),
     descripcion: descDeCodigo(codigo),
     metros: m, metrosIni: m,
     desde: cuando, por: firmaUsuario(),
@@ -4178,7 +4197,7 @@ function registrarEnStock(texto) {
    no estaba en el inventario. */
 function altaRapida(codigo, folio, metros) {
   const cod = normCod(codigo);
-  const f = normFolio(folio);
+  const f = folioLimpio(folio);
   if (!f) return;
   modal(`
     <h3>Recibir carrete</h3>
@@ -4213,7 +4232,7 @@ function altaRapida(codigo, folio, metros) {
 
   $('altaOk')?.addEventListener('click', () => {
     const c2 = normCod($('altaCodigo').value);
-    const f2 = normFolio($('altaFolio').value);
+    const f2 = folioLimpio($('altaFolio').value);
     const m2 = aNum($('altaMetros').value);
     if (!c2 || !f2) { toast('Faltan el código y el folio', 'mal'); return; }
     if (m2 == null || m2 <= 0) { toast('Poné cuántos metros trae el carrete', 'mal'); return; }
@@ -4565,7 +4584,7 @@ async function importarStock(ev) {
 
   (datos.filas || []).forEach(fila => {
     const codigo = normCod(val(fila, 'codigo'));
-    const folio  = normFolio(val(fila, 'folio'));
+    const folio  = folioLimpio(val(fila, 'folio'));
     if (!codigo || !folio) { ignorados++; return; }
 
     const clave = idCarrete(codigo, folio);
