@@ -1,0 +1,47 @@
+# Publica la app en GitHub Pages.
+#
+# El paso "configure-pages" viene con enablement: true, así que la primera
+# vez que corre deja Pages encendido solo: no hay que tocar nada en
+# Settings. Después de eso, cada push a esta rama vuelve a publicar.
+#
+# Queda en https://clapsdmccontacto-gif.github.io/cables-coopelan/
+name: Publicar la app
+
+on:
+  push:
+    branches: [claude/cables-inventory-cloud-app-c095v8]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Si se pushea dos veces seguidas, que no se pisen los despliegues.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.desplegar.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Encender Pages si hace falta
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # index.html está en la raíz, así que el link abre la app directo.
+      - name: Empaquetar el sitio
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Desplegar
+        id: desplegar
+        uses: actions/deploy-pages@v4
