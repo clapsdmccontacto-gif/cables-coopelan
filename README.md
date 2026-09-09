@@ -32,18 +32,27 @@ aparecen códigos nuevos se cargan con un CSV/XLSX de dos columnas
 
 ## Cómo lee las etiquetas
 
-No todas las etiquetas vienen iguales, así que se prueban tres formas, en orden:
+El código de barras de la cooperativa trae los tres datos **en este orden:
+código, metraje y folio**. Así, `F0157 1000 1053` son 1000 metros del carrete
+1053. Cuando los datos vienen rotulados (`N°1053`, `1000 MTS`) manda el rótulo,
+no la posición:
 
 | Etiqueta | Código | Folio | Metros |
 |---|---|---|---|
-| `F0152 FOLIO 12345 500 MTS` | F0152 | 12345 | 500 |
-| `F0152;12345;500` | F0152 | 12345 | 500 |
+| `F0157 1000 1053` | F0157 | 1053 | 1000 |
+| `F0157 N°1053 1000 MTS` | F0157 | 1053 | 1000 |
+| `F0157;1000;1053` | F0157 | 1053 | 1000 |
 | `F0270 CARRETE 8891 1.250,5 M` | F0270 | 8891 | 1250,5 |
-| `CABLE F0243 N 777 METROS 320` | F0243 | 777 | 320 |
-| `12345` | — | 12345 | — |
+| `F0243 FOLIO 777 METROS 320` | F0243 | 777 | 320 |
+| `1053` | — | 1053 | — |
+
+Un número suelto se toma como folio: casi siempre es alguien buscando un
+carrete, no declarando un metraje.
 
 Lo que se dedujo por posición (y no por un rótulo) se marca con `?` en pantalla
-para que el operario lo confirme antes de que se descuente nada.
+para que el operario lo confirme antes de que se descuente nada. Y si con ese
+folio no aparece ningún carrete pero al revés sí, la app corrige sola: una
+etiqueta impresa en el otro orden encuentra igual su carrete.
 
 Si la etiqueta solo trae el folio, el código y los metros se toman de los dos
 campos de arriba de la vista de Stock.
@@ -54,7 +63,9 @@ campos de arriba de la vista de Stock.
   de inventario borraría todo lo despachado. Para corregir el metraje está
   «Ajustar metros», que deja constancia de quién, cuándo y por qué.
 - **No se puede despachar más de lo que hay.** El check list no cierra si los
-  metros superan el saldo del carrete.
+  metros superan el saldo del carrete. Y como la etiqueta trae el metraje
+  *original* del carrete (los 1000 MTS impresos), en un despacho la app propone
+  como mucho lo que queda: si el carrete va por 750, propone 750 y no 1000.
 - **Eliminar un movimiento devuelve los metros** al carrete, para que el
   inventario no quede descuadrado justamente por haber corregido un error.
 

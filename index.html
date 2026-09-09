@@ -1461,7 +1461,7 @@ const CONFIG_FIJA = {
    archivo es de texto y quien lo abra puede mirarlo. Sirve para que un
    operario no cambie la configuracion sin querer.
    Se guarda el valor transformado para que no se lea de un vistazo. */
-const VERSION_APP = '2026-09-09.2';
+const VERSION_APP = '2026-09-09.3';
 
 const CLAVE_ADMIN = 2916600601;
 function huella(txt) {
@@ -1621,36 +1621,45 @@ function leerEtiqueta(bruto) {
   const r = { bruto: s, codigo: '', folio: '', metros: null, supuesto: [], resto: '' };
   if (!s) return r;
 
-  // 1 · etiqueta con separadores: F0152;12345;500
-  const partes = s.split(/[;|]/).map(limpiar).filter(Boolean);
-  if (partes.length >= 2 && partes.length <= 4 && RE_COD.test(partes[0])) {
-    r.codigo = normCod(partes[0]);
-    if (partes[1]) r.folio = normFolio(partes[1]);
-    if (partes[2]) r.metros = aNum(partes[2]);
-    r.resto = partes.slice(3).join(' ');
-    return r;
-  }
-
+  // Los separadores no cambian nada: se tratan como espacios y despues
+  // decide el orden, igual que con una etiqueta escrita con espacios.
   let resto = ' ' + s.replace(/[;|]/g, ' ') + ' ';
 
-  // 2 · codigo del cable
+  // 1 · codigo del cable
   const mCod = resto.match(RE_COD);
   if (mCod) { r.codigo = (mCod[1] + mCod[2]).toUpperCase(); resto = resto.replace(mCod[0], ' '); }
 
-  // 3 · metros: van con su unidad, o con la palabra por delante
+  // 2 · metros, cuando vienen con su unidad o con la palabra por delante
   const mMet = resto.match(/\b(?:MTS?|MTRS?|METROS?|LARGO)\s*[:=]?\s*([\d.,]+)/i)
             || resto.match(/([\d.,]+)\s*(?:MTRS|MTS|METROS|METRO|MT|M)\b/i);
   if (mMet) { r.metros = aNum(mMet[1]); resto = resto.replace(mMet[0], ' '); }
 
-  // 4 · folio rotulado
-  const mFol = resto.match(/\b(?:FOLIO|FOL|CARRETE|ROLLO|BOBINA|NRO|NO|N)\s*[°ºo*.:=-]?\s*([A-Z]?\d{2,}[A-Z]?)\b/i);
+  // 3 · folio rotulado (N°1053, FOLIO 1053, CARRETE 1053)
+  const mFol = resto.match(/\b(?:FOLIO|FOL|CARRETE|ROLLO|BOBINA|NRO|NO|N)\s*[°ºo*.:=-]?\s*([A-Z]{0,2}-?\d{2,}[A-Z]?)\b/i);
   if (mFol) { r.folio = normFolio(mFol[1]); resto = resto.replace(mFol[0], ' '); }
 
-  // 5 · lo que sobra son numeros sueltos: el primero es el folio y, si
-  //     todavia faltan los metros, el segundo son los metros.
-  const sueltos = (resto.match(/\b[A-Z]?\d{2,}[A-Z]?\b/gi) || []).map(x => x.toUpperCase());
-  if (!r.folio && sueltos.length) { r.folio = normFolio(sueltos.shift()); r.supuesto.push('folio'); }
-  if (r.metros == null && sueltos.length) { r.metros = aNum(sueltos.shift()); r.supuesto.push('metros'); }
+  /* 4 · Lo que queda son numeros sin rotulo, que es lo que trae el codigo
+     de barras de la cooperativa. Ahi el orden es CODIGO, METRAJE y FOLIO
+     (F0157 1000 1053 = 1000 metros del carrete 1053), asi que con dos
+     numeros sueltos el primero son los metros y el segundo el folio.
+
+     Con UNO solo se toma como folio: un numero suelto casi siempre es
+     alguien buscando un carrete, no declarando un metraje.
+
+     Solo se piden numeros rodeados de espacios. Si la etiqueta trae
+     tambien la descripcion, algo como "1x120mm2.25KvTRI" queda afuera:
+     esos digitos son de la seccion del cable, no del carrete. */
+  const sueltos = [];
+  resto.replace(/(?:^|\s)([A-Z]{0,2}-?\d[\d.,]*\d[A-Z]?)[.,]?(?=\s|$)/gi,
+                (m, tok) => { sueltos.push(tok.toUpperCase()); return m; });
+
+  if (sueltos.length >= 2 && !r.folio && r.metros == null) {
+    r.metros = aNum(sueltos.shift()); r.supuesto.push('metros');
+    r.folio  = normFolio(sueltos.shift()); r.supuesto.push('folio');
+  } else {
+    if (!r.folio && sueltos.length) { r.folio = normFolio(sueltos.shift()); r.supuesto.push('folio'); }
+    if (r.metros == null && sueltos.length) { r.metros = aNum(sueltos.shift()); r.supuesto.push('metros'); }
+  }
   sueltos.forEach(n => { resto = resto.replace(n, ' '); });
 
   r.resto = limpiar(resto);
@@ -1673,8 +1682,16 @@ function campoCarrete(c, clave, tipo) {
        y ahorra tipear; siempre se puede corregir antes de cerrar. */
     case 'metros': {
       const leidos = c.__metrosLeidos;
+      const saldo = redM(c.metros);
+      /* Ojo: la etiqueta del carrete trae el metraje ORIGINAL (1000 MTS),
+         no lo que queda hoy. Proponer eso en el segundo despacho daria
+         siempre mas que el saldo y obligaria a corregir un error a mano
+         cada vez, asi que en una salida se topea en lo disponible. */
+      if (tipo === 'salida' && !c.__suelto) {
+        if (saldo <= 0) return '';
+        return String(leidos != null && leidos > 0 ? Math.min(redM(leidos), saldo) : saldo);
+      }
       if (leidos != null && leidos > 0) return String(redM(leidos));
-      if (tipo === 'salida' && !c.__suelto && c.metros > 0) return String(redM(c.metros));
       return '';
     }
     default: return c[clave] || '';
@@ -1706,6 +1723,20 @@ function buscar(texto) {
 
   let hits = buscarCarrete(et.codigo, et.folio);
   if (hits.length) return { et, hits, por: 'folio' };
+
+  /* Si el folio y los metros salieron por posicion y con ese folio no hay
+     ningun carrete, se prueba al reves antes de darse por vencido: una
+     etiqueta impresa en el otro orden encuentra igual su carrete. Solo
+     vale si el cambio da con uno de verdad; si no, se deja como estaba. */
+  if (et.supuesto.includes('folio') && et.supuesto.includes('metros') && et.metros != null) {
+    const alReves = buscarCarrete(et.codigo, String(et.metros));
+    if (alReves.length) {
+      const metros = aNum(et.folio);
+      et.folio = normFolio(String(et.metros));
+      et.metros = metros;
+      return { et, hits: alReves, por: 'folio' };
+    }
+  }
 
   // Solo se leyo el codigo: se ofrecen los carretes de ese cable.
   if (et.codigo) {
